@@ -1,5 +1,6 @@
 import Attendance from '../models/Attendance.js';
 import Student from '../models/Student.js';
+import { sendAttendanceEmail } from '../utils/emailService.js';
 
 // @desc    Mark attendance
 // @route   POST /api/attendance
@@ -22,25 +23,50 @@ export const markAttendance = async (req, res) => {
       date: attendanceDate,
     });
 
+    // Get student details for email
+    const studentData = await Student.findById(student);
+    
+    if (!studentData) {
+      return res.status(404).json({ message: 'Student not found' });
+    }
+
+    let attendance;
+
     if (existing) {
       // Update existing attendance
       existing.status = status;
       existing.remarks = remarks || existing.remarks;
       existing.markedBy = req.user._id;
-      const updated = await existing.save();
-      return res.json(updated);
+      attendance = await existing.save();
+    } else {
+      // Create new attendance
+      attendance = await Attendance.create({
+        student,
+        date: attendanceDate,
+        status,
+        remarks,
+        markedBy: req.user._id,
+      });
     }
 
-    // Create new attendance
-    const attendance = await Attendance.create({
-      student,
+    // Send email notification (don't wait for it to complete)
+    sendAttendanceEmail({
+      studentEmail: studentData.email,
+      studentName: studentData.name,
+      status: status,
       date: attendanceDate,
-      status,
-      remarks,
-      markedBy: req.user._id,
+      studentId: studentData.studentId,
+    }).catch((emailError) => {
+      // Log error but don't fail the request
+      console.error('Failed to send attendance email:', emailError);
     });
 
-    res.status(201).json(attendance);
+    // Return attendance record
+    if (existing) {
+      return res.json(attendance);
+    } else {
+      return res.status(201).json(attendance);
+    }
   } catch (error) {
     if (error.code === 11000) {
       res.status(400).json({ message: 'Attendance already marked for this date' });

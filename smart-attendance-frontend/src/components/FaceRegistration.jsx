@@ -22,7 +22,20 @@ export default function FaceRegistration({ onFaceCaptured, onClose }) {
   const loadModels = async () => {
     try {
       setLoading(true);
-      const MODEL_URL = '/models'; // We'll need to copy models to public folder
+      setError('');
+      const MODEL_URL = '/models';
+      
+      // Check if models exist
+      try {
+        const testResponse = await fetch(`${MODEL_URL}/tiny_face_detector_model-weights_manifest.json`);
+        if (!testResponse.ok) {
+          throw new Error('Models not found');
+        }
+      } catch (fetchErr) {
+        setError('Face recognition models not found. Please download them to /public/models/ folder. See FACIAL_RECOGNITION_SETUP.md for instructions.');
+        setLoading(false);
+        return;
+      }
       
       await Promise.all([
         faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
@@ -34,7 +47,7 @@ export default function FaceRegistration({ onFaceCaptured, onClose }) {
       setLoading(false);
     } catch (err) {
       console.error('Error loading models:', err);
-      setError('Failed to load face recognition models. Please ensure models are in /public/models folder.');
+      setError(`Failed to load face recognition models: ${err.message}. Please ensure all 7 model files are in /public/models/ folder.`);
       setLoading(false);
     }
   };
@@ -60,30 +73,37 @@ export default function FaceRegistration({ onFaceCaptured, onClose }) {
   };
 
   const detectFace = async () => {
-    if (!modelsLoaded || !videoRef.current) return;
+    if (!modelsLoaded || !videoRef.current || !canvasRef.current) return;
 
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
+    try {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
 
-    if (!canvas) return;
+      if (!video.videoWidth || !video.videoHeight) {
+        requestAnimationFrame(detectFace);
+        return;
+      }
 
-    const displaySize = { width: video.videoWidth, height: video.videoHeight };
-    faceapi.matchDimensions(canvas, displaySize);
+      const displaySize = { width: video.videoWidth, height: video.videoHeight };
+      faceapi.matchDimensions(canvas, displaySize);
 
-    const detection = await faceapi
-      .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
-      .withFaceLandmarks()
-      .withFaceDescriptor();
+      const detection = await faceapi
+        .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+        .withFaceLandmarks()
+        .withFaceDescriptor();
 
-    if (detection) {
-      setFaceDetected(true);
-      const resizedDetection = faceapi.resizeResults(detection, displaySize);
-      faceapi.draw.drawDetections(canvas, resizedDetection);
-      faceapi.draw.drawFaceLandmarks(canvas, resizedDetection);
-    } else {
-      setFaceDetected(false);
-      const ctx = canvas.getContext('2d');
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (detection) {
+        setFaceDetected(true);
+        const resizedDetection = faceapi.resizeResults(detection, displaySize);
+        faceapi.draw.drawDetections(canvas, resizedDetection);
+        faceapi.draw.drawFaceLandmarks(canvas, resizedDetection);
+      } else {
+        setFaceDetected(false);
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+    } catch (err) {
+      console.error('Error in detectFace:', err);
     }
 
     requestAnimationFrame(detectFace);
@@ -93,6 +113,9 @@ export default function FaceRegistration({ onFaceCaptured, onClose }) {
     if (modelsLoaded && videoRef.current) {
       detectFace();
     }
+    return () => {
+      // Cleanup
+    };
   }, [modelsLoaded]);
 
   const captureFace = async () => {
@@ -127,8 +150,34 @@ export default function FaceRegistration({ onFaceCaptured, onClose }) {
   if (loading) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-        <div className="rounded-lg bg-white p-6">
+        <div className="rounded-lg bg-white p-6 shadow-lg">
           <p className="text-slate-700">Loading face recognition models...</p>
+          <p className="mt-2 text-xs text-slate-500">This may take a few seconds...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error && !modelsLoaded) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+        <div className="relative rounded-lg bg-white p-6 shadow-lg max-w-md">
+          <button
+            onClick={onClose}
+            className="absolute right-4 top-4 text-slate-400 hover:text-slate-600"
+          >
+            ✕
+          </button>
+          <h2 className="mb-4 text-xl font-semibold">Error Loading Models</h2>
+          <div className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-600">
+            {error}
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          >
+            Close
+          </button>
         </div>
       </div>
     );
@@ -155,13 +204,17 @@ export default function FaceRegistration({ onFaceCaptured, onClose }) {
             autoPlay
             muted
             playsInline
-            className="rounded-lg"
+            className="rounded-lg bg-slate-900"
             width="640"
             height="480"
+            style={{ maxWidth: '100%', height: 'auto' }}
           />
           <canvas
             ref={canvasRef}
             className="absolute top-0 left-0 pointer-events-none"
+            width="640"
+            height="480"
+            style={{ maxWidth: '100%', height: 'auto' }}
           />
           {faceDetected && (
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-emerald-500 px-4 py-2 text-sm font-medium text-white">

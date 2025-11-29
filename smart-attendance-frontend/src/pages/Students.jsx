@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { studentsAPI } from '../utils/api.js';
+import FaceRegistration from '../components/FaceRegistration.jsx';
 
 export default function Students() {
   const [students, setStudents] = useState([]);

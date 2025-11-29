@@ -87,7 +87,7 @@ function App() {
         </main>
       </div>
       {!isAuthPage && <Footer />}
-    </div>
+      </div>
   );
 }
 

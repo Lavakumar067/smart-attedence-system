@@ -12,6 +12,8 @@ export default function FaceRecognition({ onAttendanceMarked, onClose }) {
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [markingAttendance, setMarkingAttendance] = useState(false);
+  const [markedStudents, setMarkedStudents] = useState(new Set());
 
   useEffect(() => {
     loadModels();
@@ -114,8 +116,15 @@ export default function FaceRecognition({ onAttendanceMarked, onClose }) {
 
       if (bestMatch) {
         setRecognizedStudent(bestMatch);
-        setScanning(false);
-        markAttendance(bestMatch._id);
+        
+        // Check if already marked today to prevent duplicate marking
+        if (!markedStudents.has(bestMatch._id) && !markingAttendance) {
+          setScanning(false);
+          // Small delay to ensure UI updates
+          setTimeout(() => {
+            markAttendance(bestMatch._id);
+          }, 100);
+        }
       } else {
         setRecognizedStudent(null);
       }
@@ -139,6 +148,8 @@ export default function FaceRecognition({ onAttendanceMarked, onClose }) {
     setError('');
     setSuccess('');
     setRecognizedStudent(null);
+    setMarkedStudents(new Set()); // Reset marked students
+    setMarkingAttendance(false);
     recognizeFace();
   };
 
@@ -147,22 +158,68 @@ export default function FaceRecognition({ onAttendanceMarked, onClose }) {
   };
 
   const markAttendance = async (studentId) => {
+    // Prevent duplicate marking
+    if (markingAttendance || markedStudents.has(studentId)) {
+      return;
+    }
+
     try {
-      await attendanceAPI.mark({
+      setMarkingAttendance(true);
+      setError('');
+      
+      const response = await attendanceAPI.mark({
         student: studentId,
         status: 'present',
         date: new Date().toISOString().split('T')[0],
       });
-      setSuccess('Attendance marked successfully!');
-      if (onAttendanceMarked) {
-        onAttendanceMarked();
+      
+      if (response && response.data) {
+        const studentName = recognizedStudent?.name || 'student';
+        setSuccess(`✓ Attendance marked successfully for ${studentName}!`);
+        
+        console.log('Attendance marked successfully for:', studentId, response.data);
+        
+        // Mark this student as already marked
+        setMarkedStudents((prev) => new Set([...prev, studentId]));
+        
+        // Call the callback to refresh attendance data (pass studentId for immediate update)
+        if (onAttendanceMarked) {
+          try {
+            console.log('Calling attendance marked callback with studentId:', studentId);
+            await onAttendanceMarked(studentId);
+            console.log('Attendance callback completed successfully');
+          } catch (callbackErr) {
+            console.error('Error in attendance callback:', callbackErr);
+          }
+        } else {
+          console.warn('onAttendanceMarked callback not provided');
+        }
+        
+        // Stop scanning and close after showing success
+        setTimeout(() => {
+          stopScanning();
+          if (onClose) onClose();
+        }, 3000);
+      } else {
+        throw new Error('No response data received');
       }
-      setTimeout(() => {
-        stopScanning();
-        if (onClose) onClose();
-      }, 2000);
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to mark attendance');
+      console.error('Error marking attendance:', err);
+      const errorMsg = err.response?.data?.message || 'Failed to mark attendance. Please try again.';
+      setError(errorMsg);
+      
+      // If it's a duplicate error, show a different message
+      if (errorMsg.includes('already') || errorMsg.includes('duplicate')) {
+        setSuccess(`Attendance already marked for ${recognizedStudent?.name || 'this student'} today.`);
+        setTimeout(() => {
+          stopScanning();
+          if (onClose) onClose();
+        }, 2000);
+      } else {
+        setScanning(false); // Stop scanning on error
+      }
+    } finally {
+      setMarkingAttendance(false);
     }
   };
 

@@ -15,6 +15,17 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchStats();
+    
+    // Listen for attendance updates
+    const handleAttendanceUpdate = () => {
+      fetchStats();
+    };
+    
+    window.addEventListener('attendanceUpdated', handleAttendanceUpdate);
+    
+    return () => {
+      window.removeEventListener('attendanceUpdated', handleAttendanceUpdate);
+    };
   }, []);
 
   const fetchStats = async () => {

@@ -33,24 +33,42 @@ export default function Attendance() {
       const today = new Date().toISOString().split('T')[0];
       const response = await attendanceAPI.getAll({ date: today });
       const todayAttendance = {};
-      response.data.forEach((a) => {
-        todayAttendance[a.student._id] = a.status;
-      });
+      
+      if (response && response.data && Array.isArray(response.data)) {
+        response.data.forEach((a) => {
+          // Handle both populated and non-populated student references
+          const studentId = a.student?._id || a.student || a.studentId;
+          if (studentId && a.status) {
+            todayAttendance[studentId] = a.status;
+          }
+        });
+      }
+      
+      console.log('Fetched attendance:', todayAttendance);
+      // Force state update with new object reference
       setAttendance(todayAttendance);
     } catch (err) {
       console.error('Failed to load today attendance:', err);
+      // On error, set empty object so all students default to 'absent'
+      setAttendance({});
     }
   };
 
   const markAttendance = async (studentId, status) => {
     try {
       setSaving((prev) => ({ ...prev, [studentId]: true }));
-      await attendanceAPI.mark({
+      const response = await attendanceAPI.mark({
         student: studentId,
         status,
         date: new Date().toISOString().split('T')[0],
       });
+      
+      // Update local state immediately
       setAttendance((prev) => ({ ...prev, [studentId]: status }));
+      
+      // Also refresh from server to ensure consistency
+      await fetchTodayAttendance();
+      
       setError('');
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to mark attendance');
@@ -70,9 +88,29 @@ export default function Attendance() {
     );
   }
 
-  const handleAttendanceMarked = () => {
-    fetchTodayAttendance();
-    fetchStudents();
+  const handleAttendanceMarked = async (studentId) => {
+    // Immediately update local state to 'present' for the recognized student
+    if (studentId) {
+      setAttendance((prev) => ({
+        ...prev,
+        [studentId]: 'present',
+      }));
+      console.log('Updated local state for student:', studentId);
+    }
+    
+    // Small delay to ensure backend has processed the request
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Refresh attendance data from server to ensure consistency
+    await fetchTodayAttendance();
+    
+    // Also refresh students list
+    await fetchStudents();
+    
+    // Trigger a custom event to notify dashboard
+    window.dispatchEvent(new CustomEvent('attendanceUpdated'));
+    
+    console.log('Attendance marked callback completed');
   };
 
   return (
